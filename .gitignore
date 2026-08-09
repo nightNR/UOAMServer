@@ -1,0 +1,39 @@
+# .NET build outputs
+**/bin/
+**/obj/
+artifacts/
+TestResults/
+*.nupkg
+*.snupkg
+
+# IDE and editor state
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.rsuser
+*.DotSettings.user
+
+# Local tools and agent state
+.claude/
+.codex/
+.agents/
+
+# Runtime and diagnostic files
+*.log
+*.tmp
+*.temp
+*.pid
+*.dmp
+*.stackdump
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
