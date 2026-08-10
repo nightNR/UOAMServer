@@ -1,0 +1,20 @@
+[Unit]
+Description=UOAMServer (UOAM/uoam_Orion hub server)
+After=network.target
+
+[Service]
+Type=simple
+User=uomap-server
+Group=uomap-server
+WorkingDirectory=/opt/uomap-server
+ExecStart=/usr/bin/dotnet /opt/uomap-server/UOAMServer.dll --port 2000 --verbose --verbose
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/uomap-server
+
+[Install]
+WantedBy=multi-user.target
