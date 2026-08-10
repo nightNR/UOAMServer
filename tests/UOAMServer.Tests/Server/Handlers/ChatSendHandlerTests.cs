@@ -33,7 +33,7 @@ public class ChatSendHandlerTests
         domain.TryAddClient(peer);
         var packet = BuildChatSendPacket("Alice", "hello");
 
-        ChatSendHandler.Handle(sender, packet, 0, sequence: 1);
+        ChatSendHandler.Handle(sender, packet, 0, packet.Length, sequence: 1);
 
         Assert.Single(sender.ChatQueue);
         Assert.Single(peer.ChatQueue);
@@ -51,7 +51,7 @@ public class ChatSendHandlerTests
         domainB.TryAddClient(outsider);
         var packet = BuildChatSendPacket("Alice", "hello");
 
-        ChatSendHandler.Handle(sender, packet, 0, sequence: 1);
+        ChatSendHandler.Handle(sender, packet, 0, packet.Length, sequence: 1);
 
         Assert.Empty(outsider.ChatQueue);
     }
@@ -69,7 +69,7 @@ public class ChatSendHandlerTests
             fullPeer.ChatQueue.Enqueue(Array.Empty<byte>());
         var packet = BuildChatSendPacket("Alice", "hello");
 
-        ChatSendHandler.Handle(sender, packet, 0, sequence: 1);
+        ChatSendHandler.Handle(sender, packet, 0, packet.Length, sequence: 1);
 
         Assert.Equal(Limits.MaxChats, fullPeer.ChatQueue.Count);
     }
@@ -83,7 +83,7 @@ public class ChatSendHandlerTests
         domain.TryAddClient(sender);
         var packet = BuildChatSendPacket("Alice", "hello");
 
-        var response = ChatSendHandler.Handle(sender, packet, 0, sequence: 3);
+        var response = ChatSendHandler.Handle(sender, packet, 0, packet.Length, sequence: 3);
 
         Assert.Equal(0x02, response[2]);
         Assert.Equal(28, response.Length);
@@ -101,7 +101,7 @@ public class ChatSendHandlerTests
         domain.TryAddClient(peer);
         var packet = BuildChatSendPacket("Alice", "hi", subtype: 1);
 
-        ChatSendHandler.Handle(sender, packet, 0, sequence: 1);
+        ChatSendHandler.Handle(sender, packet, 0, packet.Length, sequence: 1);
 
         var queued = peer.ChatQueue.Peek();
         Assert.Equal(1u, ReadUInt32LE(queued, 0));
@@ -119,13 +119,41 @@ public class ChatSendHandlerTests
         domain.TryAddClient(peer);
         var packet = BuildChatSendPacket("Alice", "ignored", subtype: 2);
 
-        var response = ChatSendHandler.Handle(sender, packet, 0, sequence: 1);
+        var response = ChatSendHandler.Handle(sender, packet, 0, packet.Length, sequence: 1);
 
         Assert.Empty(peer.ChatQueue);
         Assert.Equal(28, response.Length); // still acks
         Assert.Equal(1u, ReadUInt32LE(response, 20)); // still chat-family Ack
     }
 
+    [Fact]
+    public void Handle_OversizedSharedBuffer_DoesNotRelayTrailingGarbage()
+    {
+        // `data` is the connection's shared, oversized receive buffer, reused
+        // across reads and never cleared between packets — it can be much
+        // larger than any one packet. The relayed body must be sized from
+        // the packet's own declared length, not data.Length, or a recipient
+        // gets stale bytes appended after the real payload (e.g. leftover
+        // password bytes from an earlier packet in this same buffer).
+        var host = new Host(lockedPassword: null);
+        var domain = host.CreateDomain("pw")!;
+        var sender = new Client(1);
+        var peer = new Client(2);
+        domain.TryAddClient(sender);
+        domain.TryAddClient(peer);
+        var realPacket = BuildChatSendPacket("Alice", "hi");
+        var oversizedBuffer = new byte[realPacket.Length + 500];
+        Array.Copy(realPacket, oversizedBuffer, realPacket.Length);
+        for (var i = realPacket.Length; i < oversizedBuffer.Length; i++)
+            oversizedBuffer[i] = 0xAA; // stand-in for stale bytes from a prior packet
+
+        ChatSendHandler.Handle(sender, oversizedBuffer, 0, realPacket.Length, sequence: 1);
+
+        var queued = peer.ChatQueue.Peek();
+        Assert.Equal(realPacket.Length - ChatSendHandler.PayloadOffset, queued.Length);
+    }
+
     private static uint ReadUInt32LE(byte[] buffer, int offset) =>
         (uint)(buffer[offset] | buffer[offset + 1] << 8 | buffer[offset + 2] << 16 | buffer[offset + 3] << 24);
 }
+

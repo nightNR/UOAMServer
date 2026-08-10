@@ -18,11 +18,6 @@ public sealed class UoamServer
     private readonly List<Task> _connectionTasks = new();
 
     private const int ChatBindRequestLength = 72;
-    private const int ChatFamilyMajor = 1;
-    private const int ChatFamilyMinorSend = 0;
-    private const int MajorFieldOffset = 20; // header(16) + major(offset 4-5 of the 48-byte data prefix)
-    private const int MinorFieldOffset = MajorFieldOffset + 2; // = 22
-    private const int MinMajorFieldLength = MajorFieldOffset + 2; // = 22: enough of the packet to safely read major
     private const int IdleTimeoutSeconds = 60;
     private static readonly TimeSpan MaintenanceInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ShutdownDrainTimeout = TimeSpan.FromSeconds(5);
@@ -318,16 +313,23 @@ public sealed class UoamServer
                     return null;
                 }
 
-                if ((int)header.Length >= MinMajorFieldLength)
-                {
-                    var major = ReadUInt16LE(buffer, offset + MajorFieldOffset);
-                    if (major == ChatFamilyMajor && !isChatConnection && !IsChatSendFamily(buffer, offset, (int)header.Length))
-                    {
-                        Log.Debug($"client {client.Id}: chat-family packet on non-chat connection, sending fault");
-                        return FaultTemplate.Build(header.Sequence);
-                    }
-                }
-
+                // No connection-role fault gate here (removed 2026-08-10):
+                // the design spec's original finding — a real hub faults
+                // chat-family (major=1) packets arriving on a non-chat
+                // connection — held up in small captures, but under real
+                // concurrent multi-user load a large fraction (~36% of all
+                // chat polls in one production session) of a single
+                // player's own chat-poll calls land on their *own* position
+                // connection instead of their chat connection (client-side
+                // RPC binding-handle mixup between their 2-3 simultaneous
+                // connections). Faulting those killed the position
+                // connection outright, causing constant reconnect churn
+                // ("flickering" player lists). Since Client state (ChatQueue,
+                // Domain, etc.) is shared across all of a player's
+                // connections regardless of which one delivers a packet,
+                // PacketDispatcher.Dispatch already handles chat-family
+                // operations correctly no matter which physical socket they
+                // arrive on — so just let them through instead of faulting.
                 // No lock here: PacketDispatcher.Dispatch (Task 12) manages
                 // its own per-domain locking internally now — this is the
                 // behavior change from the original plan's single
@@ -384,30 +386,6 @@ public sealed class UoamServer
         return HandshakeHandler.BuildAck(client, header.Sequence, _port);
     }
 
-    // Real uoam_Orion clients send a chat "registration" packet on the
-    // position/primary connection before ever opening the dedicated
-    // chat-bind connection — faulting it (the doc's assumption, based on a
-    // different client family) makes this client tear the whole connection
-    // down and retry forever, never settling into a working chat session.
-    // Its exact payload shape isn't stable (observed both an 88-byte and a
-    // 108-byte variant with the subtype at different offsets), so rather
-    // than pattern-match the payload, exempt the whole (major=1, minor=0)
-    // "send" family from the fault gate on non-chat connections — real chat
-    // text sends only ever arrive here on an already-bound chat connection
-    // (where isChatConnection is already true and this gate doesn't apply
-    // at all), so this can't misroute an actual chat message. ChatSendHandler
-    // already no-ops registration (subtype 2) and defensively handles
-    // whatever else lands here.
-    private static bool IsChatSendFamily(byte[] buffer, int offset, int length)
-    {
-        if (length < MinorFieldOffset + 2)
-            return false;
-
-        return ReadUInt16LE(buffer, offset + MinorFieldOffset) == ChatFamilyMinorSend;
-    }
-
-    private static ushort ReadUInt16LE(byte[] buffer, int offset) =>
-        (ushort)(buffer[offset] | buffer[offset + 1] << 8);
 
     private static string ToHex(byte[] buffer, int offset, int length) =>
         Convert.ToHexString(buffer, offset, length);

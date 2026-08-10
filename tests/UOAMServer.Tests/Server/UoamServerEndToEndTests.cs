@@ -192,8 +192,14 @@ public class UoamServerEndToEndTests
     }
 
     [Fact]
-    public async Task ChatPollOnPositionConnection_GetsFault()
+    public async Task ChatPollOnPositionConnection_IsHandledNormallyNotFaulted()
     {
+        // Real uoam_Orion clients frequently send a chat poll on their own
+        // position connection instead of their chat connection (client-side
+        // RPC binding-handle mixup between simultaneous connections) — since
+        // Client state (ChatQueue etc.) is shared across all of a player's
+        // connections, this now dispatches normally instead of faulting the
+        // connection (see UoamServer.ProcessPacket's Data case, 2026-08-10).
         var host = new Host(lockedPassword: null);
         host.CreateDomainZero();
         using var cts = new CancellationTokenSource();
@@ -207,9 +213,10 @@ public class UoamServerEndToEndTests
 
         var poll = BuildChatPollPacket(sequence: 2, password: "friends", playerName: "Chatter");
         await stream.WriteAsync(poll);
-        var response = new byte[32];
+        var response = new byte[44];
         await ReadExactAsync(stream, response, cts);
-        Assert.Equal(0x03, response[2]); // Fault
+        Assert.Equal(0x02, response[2]); // normal NoChat, not a Fault (0x03)
+        Assert.Equal(44, response.Length);
 
         cts.Cancel();
     }

@@ -27,7 +27,13 @@ public static class HandshakeHandler
         if (length < MinPositionRequestLength)
             return false;
 
-        return new ReadOnlySpan<byte>(data, offset, length).IndexOf(InterfaceGuid) >= 0;
+        // Real uoam_Orion clients were observed (under concurrent multi-user
+        // load) sending this ~116-byte position/primary handshake shape with
+        // ChatInterfaceGuid present instead of the position InterfaceGuid —
+        // same GUID-mixing behavior already found on the chat-bind shape
+        // (see IsValidChatBindRequest). Accept either.
+        var span = new ReadOnlySpan<byte>(data, offset, length);
+        return span.IndexOf(InterfaceGuid) >= 0 || span.IndexOf(ChatInterfaceGuid) >= 0;
     }
 
     public static bool IsValidChatBindRequest(byte[] data, int offset, int length)
