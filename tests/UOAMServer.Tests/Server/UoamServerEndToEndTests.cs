@@ -338,6 +338,115 @@ public class UoamServerEndToEndTests
         cts.Cancel();
     }
 
+    [Fact]
+    public async Task ExtendedProtocol_OnlyRelaysBetweenExtendedCapableClientsInSameDomain()
+    {
+        var host = new Host(lockedPassword: null);
+        host.CreateDomainZero();
+        using var cts = new CancellationTokenSource();
+        var (_, port) = await StartTestServerAsync(host, cts);
+
+        // Stock client: handshake + one standard position update, never
+        // announces extended capability.
+        using var stock = new TcpClient();
+        await stock.ConnectAsync(IPAddress.Loopback, port);
+        var stockStream = stock.GetStream();
+        await stockStream.WriteAsync(BuildHandshakeRequest(sequence: 1));
+        await ReadExactAsync(stockStream, new byte[60], cts);
+        var stockPosition = BuildPositionPacket(sequence: 2, password: "friends", name: "Stock", x: 1, y: 1, z: 0);
+        await stockStream.WriteAsync(stockPosition);
+        await ReadExactAsync(stockStream, new byte[28], cts);
+
+        // Extended client A: handshake + capability announcement (no
+        // extended position yet — B needs to be in the domain first, since
+        // relay is a push at send time, not a pull from history).
+        using var extA = new TcpClient();
+        await extA.ConnectAsync(IPAddress.Loopback, port);
+        var extAStream = extA.GetStream();
+        await extAStream.WriteAsync(BuildHandshakeRequest(sequence: 1));
+        await ReadExactAsync(extAStream, new byte[60], cts);
+        await extAStream.WriteAsync(BuildCapabilityPacket(sequence: 2, password: "friends"));
+        await ReadExactAsync(extAStream, new byte[28], cts);
+
+        // Extended client B: handshake + capability announcement.
+        using var extB = new TcpClient();
+        await extB.ConnectAsync(IPAddress.Loopback, port);
+        var extBStream = extB.GetStream();
+        await extBStream.WriteAsync(BuildHandshakeRequest(sequence: 1));
+        await ReadExactAsync(extBStream, new byte[60], cts);
+        await extBStream.WriteAsync(BuildCapabilityPacket(sequence: 2, password: "friends"));
+        await ReadExactAsync(extBStream, new byte[28], cts);
+
+        // Now A sends its extended position — B is already in the domain, so
+        // it gets relayed. Then B polls for it.
+        await extAStream.WriteAsync(BuildExtendedPositionPacket(sequence: 3, password: "friends", serialId: 0xAAAA));
+        await ReadExactAsync(extAStream, new byte[28], cts);
+
+        await extBStream.WriteAsync(BuildExtendedPollPacket(sequence: 3, password: "friends"));
+        var pollResponse = new byte[60]; // 24-byte header + 36-byte body: A's update arrived
+        await ReadExactAsync(extBStream, pollResponse, cts);
+        Assert.Equal(2u, ReadUInt32LE(pollResponse, 20)); // marker20 = 2 -> extended family
+        Assert.Equal(0xAAAAu, ReadUInt32LE(pollResponse, 24)); // A's SerialID relayed verbatim
+
+        // The stock client only ever asked for a standard query-list — assert
+        // it still works normally and never blocked on/received major=2 data
+        // (there is no read path for major=2 on the stock side at all; this
+        // just confirms the stock connection is unaffected and still healthy).
+        // Only Stock and extA show up: query-list presence is staleness-based
+        // on LastPositionUpdateAt, which ExtendedPositionHandler also touches
+        // (extA sent one) but a capability/poll-only connection like extB
+        // never does — that's correct, not a gap in this feature.
+        var queryList = BuildQueryListPacket(sequence: 3, password: "friends");
+        await stockStream.WriteAsync(queryList);
+        var listHeader = new byte[36];
+        await ReadExactAsync(stockStream, listHeader, cts);
+        Assert.Equal(2u, ReadUInt32LE(listHeader, 24));
+
+        cts.Cancel();
+    }
+
+    private static byte[] BuildCapabilityPacket(uint sequence, string password)
+    {
+        var buffer = new byte[48 + 6]; // common prefix + "CUOX" + uint16 version
+        buffer[0] = 0x05; buffer[1] = 0x00; buffer[2] = 0x00; buffer[3] = 0x03; buffer[4] = 0x10;
+        WriteUInt32LE(buffer, 8, (uint)buffer.Length);
+        WriteUInt32LE(buffer, 12, sequence);
+        buffer[20] = 2; buffer[21] = 0; // major = 2
+        buffer[22] = 0; buffer[23] = 0; // minor = 0
+        var pw = System.Text.Encoding.ASCII.GetBytes(password);
+        Array.Copy(pw, 0, buffer, 24, pw.Length);
+        buffer[48] = 0x43; buffer[49] = 0x55; buffer[50] = 0x4F; buffer[51] = 0x58; // "CUOX"
+        buffer[52] = 1; buffer[53] = 0; // version 1
+        return buffer;
+    }
+
+    private static byte[] BuildExtendedPositionPacket(uint sequence, string password, uint serialId)
+    {
+        var buffer = new byte[48 + 36];
+        buffer[0] = 0x05; buffer[1] = 0x00; buffer[2] = 0x00; buffer[3] = 0x03; buffer[4] = 0x10;
+        WriteUInt32LE(buffer, 8, (uint)buffer.Length);
+        WriteUInt32LE(buffer, 12, sequence);
+        buffer[20] = 2; buffer[21] = 0; // major = 2
+        buffer[22] = 1; buffer[23] = 0; // minor = 1
+        var pw = System.Text.Encoding.ASCII.GetBytes(password);
+        Array.Copy(pw, 0, buffer, 24, pw.Length);
+        WriteUInt32LE(buffer, 48, serialId); // rest of the 36-byte body left zeroed — untested fields here
+        return buffer;
+    }
+
+    private static byte[] BuildExtendedPollPacket(uint sequence, string password)
+    {
+        var buffer = new byte[48];
+        buffer[0] = 0x05; buffer[1] = 0x00; buffer[2] = 0x00; buffer[3] = 0x03; buffer[4] = 0x10;
+        WriteUInt32LE(buffer, 8, (uint)buffer.Length);
+        WriteUInt32LE(buffer, 12, sequence);
+        buffer[20] = 2; buffer[21] = 0; // major = 2
+        buffer[22] = 3; buffer[23] = 0; // minor = 3
+        var pw = System.Text.Encoding.ASCII.GetBytes(password);
+        Array.Copy(pw, 0, buffer, 24, pw.Length);
+        return buffer;
+    }
+
     private static byte[] BuildChatBindRequest(uint sequence, uint masterId)
     {
         var body = new byte[72];

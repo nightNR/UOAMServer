@@ -65,4 +65,24 @@ public class PacketWriterTests
 
         Assert.Equal(new byte[] { 0xAA, 0xBB }, writer.ToArray());
     }
+
+    [Fact]
+    public void WriteInt16LE_WritesLittleEndianSignedValue()
+    {
+        var writer = new PacketWriter();
+
+        writer.WriteInt16LE(-1);
+
+        Assert.Equal(new byte[] { 0xFF, 0xFF }, writer.ToArray());
+    }
+
+    [Fact]
+    public void WriteUInt64LE_WritesLittleEndian()
+    {
+        var writer = new PacketWriter();
+
+        writer.WriteUInt64LE(0x0102030405060708UL);
+
+        Assert.Equal(new byte[] { 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01 }, writer.ToArray());
+    }
 }

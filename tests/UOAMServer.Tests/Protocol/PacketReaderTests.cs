@@ -64,4 +64,22 @@ public class PacketReaderTests
         Assert.Equal(2, reader.Position);
         Assert.Equal((byte)3, reader.ReadByte());
     }
+
+    [Fact]
+    public void ReadInt16LE_ReadsLittleEndianSignedValue()
+    {
+        var reader = new PacketReader(new byte[] { 0xFF, 0xFF }); // -1
+
+        Assert.Equal((short)-1, reader.ReadInt16LE());
+        Assert.Equal(2, reader.Position);
+    }
+
+    [Fact]
+    public void ReadUInt64LE_ReadsLittleEndian()
+    {
+        var reader = new PacketReader(new byte[] { 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01 });
+
+        Assert.Equal(0x0102030405060708UL, reader.ReadUInt64LE());
+        Assert.Equal(8, reader.Position);
+    }
 }

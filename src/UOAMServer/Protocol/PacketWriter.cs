@@ -24,6 +24,14 @@ public sealed class PacketWriter
         _buffer.Add((byte)(value >> 24));
     }
 
+    public void WriteInt16LE(short value) => WriteUInt16LE((ushort)value);
+
+    public void WriteUInt64LE(ulong value)
+    {
+        WriteUInt32LE((uint)value);
+        WriteUInt32LE((uint)(value >> 32));
+    }
+
     public void WriteZeros(int count)
     {
         for (var i = 0; i < count; i++)

@@ -15,6 +15,28 @@ public sealed class Client
     public Queue<byte[]> ChatQueue { get; } = new();
     public DateTime LastPositionUpdateAt { get; set; } = DateTime.MinValue;
 
+    // ClassicUO extended-protocol overlay (see
+    // docs/superpowers/specs/2026-08-10-classicuo-extension-design.md).
+    // SupportsExtended is set only by ExtendedCapabilityHandler — a stock
+    // UOAM/uoam_Orion client never sends that packet, so it stays false and
+    // none of the fields below are ever populated or read for it.
+    public bool SupportsExtended { get; set; }
+    public uint SerialId { get; set; }
+    public ushort Hp { get; set; }
+    public ushort MaxHp { get; set; }
+    public ushort Mana { get; set; }
+    public ushort MaxMana { get; set; }
+    public ushort Stamina { get; set; }
+    public ushort MaxStamina { get; set; }
+    public byte Facet { get; set; }
+    public byte Notoriety { get; set; }
+    public uint GuildId { get; set; }
+    public ushort ExtendedFlags { get; set; }
+    public short VelocityX { get; set; }
+    public short VelocityY { get; set; }
+    public ulong ExtendedTimestamp { get; set; }
+    public Queue<byte[]> ExtendedQueue { get; } = new();
+
     public Client(uint id)
     {
         Id = id;

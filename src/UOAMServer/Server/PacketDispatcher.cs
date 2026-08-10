@@ -57,6 +57,13 @@ public sealed class PacketDispatcher
                 (0, 2) => QueryListHandler.Handle(client, header.Sequence),
                 (1, 1) => ChatPollHandler.Handle(client, header.Sequence),
                 (1, 0) => ChatSendHandler.Handle(client, data, offset, header.Sequence),
+                // major=2 is the ClassicUO extended-protocol overlay — see
+                // docs/superpowers/specs/2026-08-10-classicuo-extension-design.md.
+                // Opt-in only: a stock UOAM/uoam_Orion client never sends
+                // these, so this is purely additive.
+                (2, 0) => ExtendedCapabilityHandler.Handle(client, data, offset, header.Sequence),
+                (2, 1) => ExtendedPositionHandler.Handle(client, data, offset, header.Sequence),
+                (2, 3) => ExtendedPollHandler.Handle(client, header.Sequence),
                 _ => null, // unrecognized but well-framed operation: drop the packet, keep the connection
             };
         }

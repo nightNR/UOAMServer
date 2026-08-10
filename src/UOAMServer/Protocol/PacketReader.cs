@@ -30,6 +30,15 @@ public sealed class PacketReader
         return value;
     }
 
+    public short ReadInt16LE() => (short)ReadUInt16LE();
+
+    public ulong ReadUInt64LE()
+    {
+        ulong low = ReadUInt32LE();
+        ulong high = ReadUInt32LE();
+        return low | (high << 32);
+    }
+
     public byte[] ReadBytes(int count)
     {
         var result = new byte[count];

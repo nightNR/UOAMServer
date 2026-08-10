@@ -116,6 +116,59 @@ public class PacketDispatcherTests
         Assert.False(client.ShouldDestroy);
     }
 
+    [Fact]
+    public void Dispatch_ExtendedCapabilityMajorMinor_RoutesToExtendedCapabilityHandler()
+    {
+        var host = new Host(lockedPassword: null);
+        var domainZero = host.CreateDomainZero();
+        var client = new Client(1);
+        domainZero.TryAddClient(client);
+        client.Handshaken = true;
+        var dispatcher = new PacketDispatcher(host);
+        var payload = new byte[] { 0x43, 0x55, 0x4F, 0x58, 0x01, 0x00 }; // "CUOX" + version 1
+        var packet = BuildDataPacket(major: 2, minor: 0, password: "pw", payload: payload);
+
+        var response = dispatcher.Dispatch(client, packet, 0, MakeHeader(packet));
+
+        Assert.NotNull(response);
+        Assert.True(client.SupportsExtended);
+    }
+
+    [Fact]
+    public void Dispatch_ExtendedPositionMajorMinor_RoutesToExtendedPositionHandler()
+    {
+        var host = new Host(lockedPassword: null);
+        var domainZero = host.CreateDomainZero();
+        var client = new Client(1);
+        domainZero.TryAddClient(client);
+        client.Handshaken = true;
+        var dispatcher = new PacketDispatcher(host);
+        var payload = new byte[36]; // all-zero extended fields is valid, just untested values here
+        var packet = BuildDataPacket(major: 2, minor: 1, password: "pw", payload: payload);
+
+        var response = dispatcher.Dispatch(client, packet, 0, MakeHeader(packet));
+
+        Assert.NotNull(response);
+        Assert.True(client.LastPositionUpdateAt > DateTime.MinValue);
+    }
+
+    [Fact]
+    public void Dispatch_ExtendedPollMajorMinor_RoutesToExtendedPollHandler()
+    {
+        var host = new Host(lockedPassword: null);
+        var domainZero = host.CreateDomainZero();
+        var client = new Client(1);
+        domainZero.TryAddClient(client);
+        client.Handshaken = true;
+        var dispatcher = new PacketDispatcher(host);
+        var packet = BuildDataPacket(major: 2, minor: 3, password: "pw", payload: Array.Empty<byte>());
+
+        var response = dispatcher.Dispatch(client, packet, 0, MakeHeader(packet));
+
+        Assert.NotNull(response);
+        Assert.Equal(24, response!.Length); // empty ExtendedQueue -> no body appended
+    }
+
     private static uint ReadUInt32LE(byte[] buffer, int offset) =>
         (uint)(buffer[offset] | buffer[offset + 1] << 8 | buffer[offset + 2] << 16 | buffer[offset + 3] << 24);
 }
