@@ -21,7 +21,7 @@ host.CreateDomainZero();
 
 Console.WriteLine($"starting UOAMServer on port {cliArgs.Port}");
 
-var server = new UoamServer(host, cliArgs.Port);
+var server = new UoamServer(host, cliArgs.Port, responseDelayMs: cliArgs.ResponseDelayMs);
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {

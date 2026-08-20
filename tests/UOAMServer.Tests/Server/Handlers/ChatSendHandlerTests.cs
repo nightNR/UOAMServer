@@ -150,7 +150,86 @@ public class ChatSendHandlerTests
         ChatSendHandler.Handle(sender, oversizedBuffer, 0, realPacket.Length, sequence: 1);
 
         var queued = peer.ChatQueue.Peek();
-        Assert.Equal(realPacket.Length - ChatSendHandler.PayloadOffset, queued.Length);
+        // "hi" (count=3) -> pad 1 + trailing 4 = 5 extra bytes, all zero —
+        // not the 0xAA stand-in for stale buffer bytes.
+        Assert.Equal(realPacket.Length - ChatSendHandler.PayloadOffset + 5, queued.Length);
+        Assert.DoesNotContain((byte)0xAA, queued);
+    }
+
+    private static byte[] BuildChatSendPacketWithFontBlob(string sender, byte[] colorRefAndLogFont)
+    {
+        var writer = new PacketWriter();
+        writer.WriteZeros(48);
+        writer.WriteZeros(4);
+        writer.WriteUInt32LE(3); // subtype 3: font/color
+        writer.WriteBytes(new byte[] { 0x00, 0x00, 0x02, 0x00 });
+        writer.WriteNdrString(sender, pad: true);
+        // Same [maxCount][marker][actualCount] triple shape as the chat-text
+        // NDR string, but wrapping a fixed COLORREF(4)+LOGFONTA(60) blob
+        // instead of text — see NdrString.ChatTextOffsetMarker's reuse here.
+        writer.WriteUInt32LE((uint)colorRefAndLogFont.Length);
+        writer.WriteUInt32LE(NdrString.ChatTextOffsetMarker);
+        writer.WriteUInt32LE((uint)colorRefAndLogFont.Length);
+        writer.WriteBytes(colorRefAndLogFont);
+        return writer.ToArray();
+    }
+
+    [Fact]
+    public void Handle_Subtype3_AppendsTrailingZeroDwordAfterFontBlob()
+    {
+        // Verified against a live client-vs-client host-mode capture
+        // (2026-08-10): a real hub appends the same constant trailing
+        // all-zero dword after subtype 3's COLORREF+LOGFONTA blob as it does
+        // after subtype 1's chat text — the blob is already 64 bytes
+        // (4-byte aligned), so only the constant +4 applies, no extra pad.
+        var host = new Host(lockedPassword: null);
+        var domain = host.CreateDomain("pw")!;
+        var sender = new Client(1);
+        var peer = new Client(2);
+        domain.TryAddClient(sender);
+        domain.TryAddClient(peer);
+        var fontBlob = new byte[64]; // COLORREF(4) + LOGFONTA(60)
+        var packet = BuildChatSendPacketWithFontBlob("Alice", fontBlob);
+        var unpaddedBodyLength = packet.Length - ChatSendHandler.PayloadOffset;
+
+        ChatSendHandler.Handle(sender, packet, 0, packet.Length, sequence: 1);
+
+        var queued = peer.ChatQueue.Peek();
+        Assert.Equal(unpaddedBodyLength + 4, queued.Length);
+        Assert.Equal(0, queued[^1]);
+        Assert.Equal(0, queued[^2]);
+        Assert.Equal(0, queued[^3]);
+        Assert.Equal(0, queued[^4]);
+    }
+
+    [Theory]
+    // Verified against a live client-vs-client host-mode capture (2026-08-10):
+    // a real hub always pads the chat-text NDR string to a 4-byte boundary
+    // and appends one extra all-zero trailing dword, regardless of length.
+    // A sender's own send packet never includes this — the hub adds it when
+    // relaying. "hi" (count=3) -> pad 1 + trailing 4 = 5 extra bytes.
+    // "ahoj svet" (count=10) -> pad 2 + trailing 4 = 6 extra bytes.
+    [InlineData("hi", 5)]
+    [InlineData("ahoj svet", 6)]
+    [InlineData("abc", 4)] // count=4, already 4-byte aligned -> pad 0 + trailing 4 = 4
+    public void Handle_Subtype1_PadsTextFieldTo4ByteBoundaryAndAppendsTrailingZeroDword(
+        string text, int expectedExtraBytes)
+    {
+        var host = new Host(lockedPassword: null);
+        var domain = host.CreateDomain("pw")!;
+        var sender = new Client(1);
+        var peer = new Client(2);
+        domain.TryAddClient(sender);
+        domain.TryAddClient(peer);
+        var packet = BuildChatSendPacket("Alice", text);
+        var unpaddedBodyLength = packet.Length - ChatSendHandler.PayloadOffset;
+
+        ChatSendHandler.Handle(sender, packet, 0, packet.Length, sequence: 1);
+
+        var queued = peer.ChatQueue.Peek();
+        Assert.Equal(unpaddedBodyLength + expectedExtraBytes, queued.Length);
+        for (var i = unpaddedBodyLength; i < queued.Length; i++)
+            Assert.Equal(0, queued[i]);
     }
 
     private static uint ReadUInt32LE(byte[] buffer, int offset) =>

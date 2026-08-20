@@ -6,9 +6,9 @@ clients — including the `uoam_Orion` fork — share live player positions and
 chat over a shared "domain" (a password acts as the room key).
 
 The wire protocol is a DCE/RPC-shaped custom binary format reverse-engineered
-from real client captures. See
-[`docs/superpowers/specs/2026-08-07-uoam-server-rewrite-design.md`](docs/superpowers/specs/2026-08-07-uoam-server-rewrite-design.md)
-for the full protocol reference.
+from real client captures. See [`docs/protocol.md`](docs/protocol.md) for the
+full client-implementable protocol reference (framing, handshake, all
+packet shapes, and the ClassicUO extended overlay).
 
 ## Building
 
@@ -65,8 +65,7 @@ The server also supports an opt-in extended protocol for a custom
 ClassicUO-based client — richer per-player data (serial, vitals, facet,
 guild/notoriety, velocity, flags) relayed only between clients that
 announce support for it, with zero behavior change for stock UOAM/uoam_Orion
-clients in the same domain. See
-[`docs/superpowers/specs/2026-08-10-classicuo-extension-design.md`](docs/superpowers/specs/2026-08-10-classicuo-extension-design.md)
+clients in the same domain. See [`docs/protocol.md`](docs/protocol.md#extended-protocol-overlay-classicuo)
 for the wire format.
 
 ## Troubleshooting a "can't connect" / protocol issue

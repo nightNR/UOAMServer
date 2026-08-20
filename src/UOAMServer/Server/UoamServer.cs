@@ -12,20 +12,25 @@ public sealed class UoamServer
     private readonly int _port;
     private readonly PacketDispatcher _dispatcher;
     private readonly ConnectionLimits _connectionLimits = new();
+    // See CliArgs.ResponseDelayMs — off (0) by default; a compatibility workaround for testing
+    // against real/buggy clients over loopback or LAN, not something a real deployment needs.
+    private readonly int _responseDelayMs;
     private uint _nextClientId = 1;
 
     private readonly object _connectionsLock = new();
     private readonly List<Task> _connectionTasks = new();
 
     private const int ChatBindRequestLength = 72;
-    private const int IdleTimeoutSeconds = 60;
+    private readonly int _idleTimeoutSeconds;
     private static readonly TimeSpan MaintenanceInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ShutdownDrainTimeout = TimeSpan.FromSeconds(5);
 
-    public UoamServer(Host host, int port)
+    public UoamServer(Host host, int port, int idleTimeoutSeconds = 60, int responseDelayMs = 0)
     {
         _host = host;
         _port = port;
+        _idleTimeoutSeconds = idleTimeoutSeconds;
+        _responseDelayMs = responseDelayMs;
         _dispatcher = new PacketDispatcher(host);
     }
 
@@ -185,7 +190,43 @@ public sealed class UoamServer
         // design couldn't interrupt a connection already blocked inside
         // ReceiveAsync, so an idle-past-budget socket could sit forever.
         using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        idleCts.CancelAfter(TimeSpan.FromSeconds(IdleTimeoutSeconds));
+        idleCts.CancelAfter(TimeSpan.FromSeconds(_idleTimeoutSeconds));
+
+        // A chat connection and its position connection(s) share one Client
+        // (see Client.ActivityObserved). Real traffic proved a real client's
+        // chat leg can go quiet for well over the idle budget on its own —
+        // closing it then cascades into the client losing position too, a
+        // full disconnect the user has to reconnect manually. Subscribing
+        // this connection's idle-reset to the shared Client's activity event
+        // means packets on *either* connection push out *both* deadlines.
+        void ResetIdleOnPeerActivity()
+        {
+            try
+            {
+                idleCts.CancelAfter(TimeSpan.FromSeconds(_idleTimeoutSeconds));
+            }
+            catch (ObjectDisposedException)
+            {
+                // This connection already closed and disposed idleCts; the
+                // sibling connection's activity notification raced the very
+                // end of this method — nothing to reset.
+            }
+        }
+
+        Client? subscribedTo = null;
+        void EnsureSubscribed(Client current)
+        {
+            if (ReferenceEquals(subscribedTo, current))
+                return;
+
+            if (subscribedTo is not null)
+                subscribedTo.ActivityObserved -= ResetIdleOnPeerActivity;
+
+            current.ActivityObserved += ResetIdleOnPeerActivity;
+            subscribedTo = current;
+        }
+
+        EnsureSubscribed(client);
 
         try
         {
@@ -212,8 +253,13 @@ public sealed class UoamServer
                     Log.Debug($"client {clientId}: recv bytes: {ToHex(buffer, consumed, (int)header.Length)}");
 
                     var response = ProcessPacket(ref client, ref isChatConnection, ref ownsClientLifecycle, buffer, consumed, header);
+                    EnsureSubscribed(client); // chat-bind may have reassigned `client` to the master
                     if (response is not null)
+                    {
+                        if (_responseDelayMs > 0)
+                            await Task.Delay(_responseDelayMs, idleCts.Token);
                         await socket.SendAsync(response, idleCts.Token);
+                    }
 
                     Log.Debug($"client {clientId}: response={(response is null ? "none" : $"{response.Length} bytes")} shouldDestroy={client.ShouldDestroy}");
                     if (response is not null)
@@ -222,7 +268,7 @@ public sealed class UoamServer
                     if (client.ShouldDestroy)
                         break;
 
-                    idleCts.CancelAfter(TimeSpan.FromSeconds(IdleTimeoutSeconds)); // reset idle budget on activity
+                    client.NotifyActivity(); // pushes out this connection's AND its sibling connection's idle budget
                     consumed += (int)header.Length;
                 }
 
@@ -250,7 +296,7 @@ public sealed class UoamServer
         catch (OperationCanceledException)
         {
             // shutdown requested, or this connection's own idle timeout fired
-            Log.Debug($"client {clientId}: cancelled (shutdown or idle timeout after {IdleTimeoutSeconds}s)");
+            Log.Debug($"client {clientId}: cancelled (shutdown or idle timeout after {_idleTimeoutSeconds}s)");
         }
         catch (SocketException ex)
         {
@@ -272,6 +318,9 @@ public sealed class UoamServer
             // must not — that Client is still owned by its own position
             // connection's loop, which may still be open.
             Log.Debug($"client {clientId}: closing, ownsClientLifecycle={ownsClientLifecycle} isChatConnection={isChatConnection} domain={(client.Domain is null ? "none" : "set")}");
+
+            if (subscribedTo is not null)
+                subscribedTo.ActivityObserved -= ResetIdleOnPeerActivity;
 
             if (ownsClientLifecycle && client.Domain is not null)
             {

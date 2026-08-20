@@ -25,14 +25,15 @@ public class UoamServerEndToEndTests
         return body;
     }
 
-    private static async Task<(TcpListener listener, int port)> StartTestServerAsync(Host host, CancellationTokenSource cts)
+    private static async Task<(TcpListener listener, int port)> StartTestServerAsync(
+        Host host, CancellationTokenSource cts, int idleTimeoutSeconds = 60)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop(); // release the port for UoamServer's own socket to bind
 
-        var server = new UoamServer(host, port);
+        var server = new UoamServer(host, port, idleTimeoutSeconds);
         _ = server.RunAsync(cts.Token);
         await Task.Delay(200); // give the accept loop time to start listening
 
@@ -276,6 +277,60 @@ public class UoamServerEndToEndTests
         var listHeader = new byte[36];
         await ReadExactAsync(positionStream, listHeader, cts);
         Assert.Equal(1u, ReadUInt32LE(listHeader, 24)); // still there
+
+        cts.Cancel();
+    }
+
+    [Fact]
+    public async Task ChatLeg_KeptAliveByPositionLegActivity_EvenPastItsOwnIdleTimeout()
+    {
+        // Verified against a live production capture (2026-08-11): a real
+        // client's chat leg naturally goes quiet longer than the server's
+        // idle timeout while position updates keep flowing on the sibling
+        // connection. The old per-socket-only idle reset closed the chat
+        // leg anyway, which cascaded into the client losing position too —
+        // a full disconnect requiring a manual reconnect. Client.
+        // ActivityObserved (wired in UoamServer) means activity on *either*
+        // connection for the same player now keeps *both* alive.
+        var host = new Host(lockedPassword: null);
+        host.CreateDomainZero();
+        using var cts = new CancellationTokenSource();
+        var (_, port) = await StartTestServerAsync(host, cts, idleTimeoutSeconds: 2);
+
+        using var position = new TcpClient();
+        await position.ConnectAsync(IPAddress.Loopback, port);
+        var positionStream = position.GetStream();
+        await positionStream.WriteAsync(BuildHandshakeRequest(sequence: 1));
+        var positionAck = new byte[60];
+        await ReadExactAsync(positionStream, positionAck, cts);
+        var masterId = ReadUInt32LE(positionAck, 20);
+
+        using var chat = new TcpClient();
+        await chat.ConnectAsync(IPAddress.Loopback, port);
+        var chatStream = chat.GetStream();
+        await chatStream.WriteAsync(BuildChatBindRequest(sequence: 1, masterId));
+        await ReadExactAsync(chatStream, new byte[60], cts);
+
+        // Keep only the position leg active — well past the 2s idle budget
+        // in total — while the chat leg sends nothing at all.
+        for (uint seq = 2; seq < 6; seq++)
+        {
+            await Task.Delay(700);
+            var positionPacket = BuildPositionPacket(sequence: seq, password: "friends", name: "Stays", x: 1, y: 1, z: 0);
+            await positionStream.WriteAsync(positionPacket);
+            await ReadExactAsync(positionStream, new byte[28], cts);
+        }
+
+        // The chat leg must still be alive: a poll on it gets a real NoChat
+        // reply, not a closed connection.
+        var poll = BuildChatPollPacket(sequence: 6, password: "friends", playerName: "Stays");
+        await chatStream.WriteAsync(poll);
+        var pollResponse = new byte[44];
+        var readTask = ReadExactAsync(chatStream, pollResponse, cts);
+        var completed = await Task.WhenAny(readTask, Task.Delay(1000));
+        Assert.Same(readTask, completed);
+        Assert.Equal(44, await readTask);
+        Assert.Equal(0x02, pollResponse[2]); // normal NoChat, not a closed/reset connection
 
         cts.Cancel();
     }
