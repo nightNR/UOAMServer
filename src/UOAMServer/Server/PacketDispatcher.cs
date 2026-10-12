@@ -64,6 +64,7 @@ public sealed class PacketDispatcher
                 (2, 0) => ExtendedCapabilityHandler.Handle(client, data, offset, header.Sequence),
                 (2, 1) => ExtendedPositionHandler.Handle(client, data, offset, header.Sequence),
                 (2, 3) => ExtendedPollHandler.Handle(client, header.Sequence),
+                (2, 4) => ExtendedSyncHandler.Handle(client, data, offset, (int)header.Length, header.Sequence),
                 _ => null, // unrecognized but well-framed operation: drop the packet, keep the connection
             };
         }

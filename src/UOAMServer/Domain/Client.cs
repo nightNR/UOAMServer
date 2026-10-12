@@ -36,6 +36,9 @@ public sealed class Client
     public short VelocityY { get; set; }
     public ulong ExtendedTimestamp { get; set; }
     // Legacy (CUOX v1) delivery: a bounded FIFO, one entry handed out per poll.
+    // Verbatim 36-byte body of the sender's latest extended update (null until one arrived);
+    // served to CUOX v3 pollers inside sync responses.
+    public byte[]? ExtendedBody { get; set; }
     public Queue<byte[]> ExtendedQueue { get; } = new();
 
     // Negotiated CUOX version (see ExtendedCapabilityHandler). >= 2 clients are served from

@@ -9,8 +9,8 @@ public static class ExtendedCapabilityHandler
     private const int MagicOffset = 48;
     private const int VersionOffset = 52;
 
-    /// <summary>Highest CUOX version this server speaks. 1 = single-entry poll; 2 = batched latest-state poll.</summary>
-    public const ushort MaxVersion = 2;
+    /// <summary>Highest CUOX version this server speaks. 1 = single-entry poll; 2 = batched latest-state poll; 3 = single-round-trip sync (2,4).</summary>
+    public const ushort MaxVersion = 3;
 
     // 16-byte framing header + offset16-19 (stub length, patched by Finalize) + marker20 = 3
     // (capability reply), then "CUOX" + uint16 negotiated version.
