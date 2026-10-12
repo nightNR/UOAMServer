@@ -21,7 +21,15 @@ public static class ExtendedPollHandler
         var writer = new PacketWriter();
         writer.WriteBytes(ResponseHeaderTemplate);
 
-        if (client.ExtendedQueue.Count > 0)
+        if (client.ExtendedVersion >= 2)
+        {
+            // Batched: every sender's latest state in one response, so the poll rate - not the
+            // number of peers - bounds how fresh the data is.
+            foreach (byte[] body in client.ExtendedPending.Values)
+                writer.WriteBytes(body);
+            client.ExtendedPending.Clear();
+        }
+        else if (client.ExtendedQueue.Count > 0)
             writer.WriteBytes(client.ExtendedQueue.Dequeue());
 
         return ResponseHeader.Finalize(writer.ToArray(), sequence);

@@ -35,7 +35,15 @@ public sealed class Client
     public short VelocityX { get; set; }
     public short VelocityY { get; set; }
     public ulong ExtendedTimestamp { get; set; }
+    // Legacy (CUOX v1) delivery: a bounded FIFO, one entry handed out per poll.
     public Queue<byte[]> ExtendedQueue { get; } = new();
+
+    // Negotiated CUOX version (see ExtendedCapabilityHandler). >= 2 clients are served from
+    // ExtendedPending instead of ExtendedQueue: latest body per sender (keyed by sender Client.Id),
+    // all of them handed out in one poll. Nothing is queued behind a slow poller, so there is
+    // no backlog and nothing is dropped - a newer update simply replaces the older one.
+    public ushort ExtendedVersion { get; set; } = 1;
+    public Dictionary<uint, byte[]> ExtendedPending { get; } = new();
 
     public Client(uint id)
     {

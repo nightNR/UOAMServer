@@ -40,6 +40,12 @@ public static class ExtendedPositionHandler
                 if (!recipient.SupportsExtended)
                     continue;
 
+                if (recipient.ExtendedVersion >= 2)
+                {
+                    recipient.ExtendedPending[sender.Id] = body;
+                    continue;
+                }
+
                 if (recipient.ExtendedQueue.Count >= Limits.MaxExtended)
                     continue;
 
