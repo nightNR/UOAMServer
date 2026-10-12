@@ -503,6 +503,48 @@ If nothing is queued, the response is the 24-byte header alone (`marker20=2`,
 length 24). Poll this on a tight interval, same as chat poll — this is the
 only delivery mechanism for extended data, there's no push.
 
+### CUOX versions (negotiated in `(2, 0)`)
+
+The announce's `uint16 version` is the highest version the client speaks. The server
+clamps it to its own maximum (currently **3**) and remembers the result per client.
+
+- **v1** (or any announce `< 2`): reply is a plain Ack. `(2,1)` updates go to each recipient's
+  bounded FIFO and `(2,3)` hands out **one** entry per poll.
+- **v2+**: reply is a *capability reply* — 30 bytes, `marker20 = 3`, then ASCII `CUOX` and
+  `uint16 negotiatedVersion` at offset 28. `(2,1)` updates are kept as **latest per sender**
+  (newer replaces older, nothing is dropped or backed up) and `(2,3)` returns **all** pending
+  bodies back-to-back (`24 + 36k` bytes, `marker20 = 2`).
+- **v3**: additionally `(2,4)` sync, below. v3 clients are not fed `(2,1)` relays (they read
+  everything from sync responses).
+
+### `(2, 4)` — sync (v3 only)
+
+One round trip: uploads the caller's state and returns every other fresh player's state.
+
+Request (100 bytes): 48-byte prefix | 36-byte extended body (as `(2,1)`) | 16-byte position
+block (as in a standard position update). Counts as presence and updates the position block
+that stock clients see in their query lists. The name still comes from a standard position
+update, so send one after the announce; players with no name are omitted from responses.
+Silently dropped (no response) unless the client negotiated v3 and the packet is 100 bytes.
+
+Response (`marker20 = 4`, minimum 28 bytes):
+
+```
+offset 0-23    standard response header
+offset 24-25   uint16 LE  count
+offset 26-27   uint16 LE  reserved (0)
+offset 28..    count x record:
+                 byte      nameLen (<= 63)
+                 nameLen   ASCII name
+                 16 bytes  position block
+                 byte      hasExtended (0/1)
+                 36 bytes  extended body, only if hasExtended = 1
+```
+
+The response is always the **full current state** (no deltas, no queue): the caller itself is
+excluded, players stale beyond the 5-second window are omitted, and a player missing from the
+next response has gone away. Stock (non-extended) peers appear with `hasExtended = 0`.
+
 ### `(2, 2)` — reserved
 
 Not implemented by this server. Reserved for a future map-markers/
